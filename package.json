@@ -1,0 +1,83 @@
+{
+  "name": "vice-ca65-debug",
+  "displayName": "vice-ca65-debug",
+  "description": "Debug extension for debugging CA65 code in VICE",
+  "version": "0.0.1",
+  "type": "module",
+  "engines": {
+    "vscode": "^1.138.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onDebugResolve:vice-ca65"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "VICE + CA65 debugging",
+      "properties": {
+        "vice-ca65-debug.viceBinary": {
+          "type": "string",
+          "description": "Path to VICE binary"
+        }
+      }
+    },
+    "debuggers": [
+      {
+        "type": "vice-ca65",
+        "languages": [ "ca65" ],
+        "label": "Vice + CA65",
+        "configurationAttributes": {
+          "launch": {
+            "required": [ "program" ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": ".prg or d64 to debug"
+              },
+              "debugInfo": {
+                "type": "string",
+                "description": "Path to debug info file"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "ca65"
+      }
+    ]
+
+  },
+  "scripts": {
+    "vscode:prepublish": "yarn run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "yarn run compile && yarn run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "@lickle/bin": "^0.3.1",
+    "@algorithm.ts/binary-search": "^4.0.5"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.138.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "24.x",
+    "typescript-eslint": "^8.61.1",
+    "eslint": "^10.5.0",
+    "typescript": "^6.0.3",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0",
+    "@vscode/debugadapter": "^1.68.0"
+  },
+  "overrides": {
+    "diff": "^8.0.4",
+    "serialize-javascript": "^7.0.6"
+  }
+}
