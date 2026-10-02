@@ -3,6 +3,7 @@ import { ChildProcess, exec } from 'child_process';
 import * as net from 'net';
 import * as bin from '@lickle/bin';
 import { type Codec } from '@lickle/bin';
+import { EventEmitter } from 'events';
 
 enum MemorySpace
 {
@@ -11,8 +12,8 @@ enum MemorySpace
 	Drive9,
 	Drive10,
 	Drive11
-};
 
+};
 enum CPUOperation
 {
 	Load = 1,
@@ -78,6 +79,30 @@ enum Response
 	JAM = 0x61,
 	Stopped = 0x62,
 	Resumed = 0x63
+};
+
+enum Error
+{
+	Succeeded = 0,
+	NonExistentObject = 1,
+	InvalidMemSpace = 2,
+	InvalidCommandLength = 0x80,
+	InvalidParameter = 0x81,
+	InvalidAPIVersion = 0x82,
+	InvalidCommand = 0x83,
+	InvalidParameterValues = 0x8f
+};
+
+const ErrorMessages: { [code: number]: string } =
+{
+	[Error.Succeeded]: "OK, everything worked.",
+	[Error.NonExistentObject]: "The object you are trying to get or set doesn't exist.",
+	[Error.InvalidMemSpace]: "The memspace is invalid.",
+	[Error.InvalidCommandLength]: "Command length is not correct for this command.",
+	[Error.InvalidParameter]: "An invalid parameter value was present.",
+	[Error.InvalidAPIVersion]: "The API version is not understood by the server.",
+	[Error.InvalidCommand]: "The command type is not understood by the server.",
+	[Error.InvalidParameterValues]: "The command had parameter values that passed basic checks, but a general failure occurred."
 };
 
 const CommandPacketHeader = bin.struct({
@@ -319,124 +344,206 @@ interface Register
 	ID: number;
 };
 
+enum ValueType
+{
+	Numeric,
+	Flags
+};
+
 export class ViceValue
 {
 	name: string;
 	value: number;
 	bits: number;
+	type: ValueType;
 
-	constructor(name: string, value: number, bits: number)
+	constructor(name: string, value: number, bits: number, type: ValueType)
 	{
 		this.name = name;
 		this.value = value;
 		this.bits = bits;
+		this.type = type;
 	}
 
 	public toString(): string
 	{
-		return `$${this.value.toString(16).padStart(this.bits / 4, '0')}`;
+		switch (this.type)
+		{
+			case ValueType.Numeric:
+				return `$${this.value.toString(16).padStart(this.bits / 4, '0')}`;
+
+			case ValueType.Flags:
+				return `${this.value & 0x80 ? 'N' : '-'}${this.value & 0x40 ? 'V' : '-'}-${this.value & 0x10 ? 'B' : '-'}${this.value & 0x08 ? 'D' : '-'}${this.value & 0x04 ? 'I' : '-'}${this.value & 0x02 ? 'Z' : '-'}${this.value & 0x01 ? 'C' : '-'}`;
+		}
 	}
 };
 
-export class ViceMonitor
+export class ViceMonitor extends EventEmitter
 {
 	process: ChildProcess | null = null;
 	client: net.Socket | null = null;
 	connected: boolean = false;
-	registers: Register[] = [];
+	running: boolean = false;
+	allRegisters: Register[] = [];
 	registersByID: { [id: number]: Register } = {};
 	registersByName: { [name: string]: Register } = {};
 	currentRegisters: { [id: number]: number } = {};
 	nextRequestID: number = 1;
-	responseCallback: { [requestID: number]: (response: any) => void } = {};
-	breakpointCallback?: () => void;
+	responseCallback: { [requestID: number]: (packetHeader: any, data: Buffer<ArrayBuffer>) => void } = {};
+	currentHeader?: Codec.Decoded<typeof ResponsePacketHeader>;
+	dataIn?: Buffer<ArrayBuffer>;
 
 	constructor()
 	{
+		super();
 	}
 
-	onBreakpoint(callback: () => void)
-	{
-		this.breakpointCallback = callback;
-	}
-
-	sendCommand(type: number, data: Uint8Array | undefined = undefined, callback: ((data: Buffer<ArrayBuffer>) => void) | undefined = undefined): number
+	async sendCommand(type: number, data: Uint8Array | undefined = undefined): Promise<Buffer<ArrayBuffer>>
 	{
 		const packetHeader = bin.encode(CommandPacketHeader, { header: 0x2, apiVersion: 0x2, length: data ? data.length : 0, requestID: this.nextRequestID, commandType: type});
 		const packet = new Uint8Array([ ...packetHeader, ...(data ? data : []) ]);
+		const requestID = this.nextRequestID++;
 
-		this.responseCallback[this.nextRequestID] = callback ? callback : () => {};
-
-		this.client?.write(packet);
-		return this.nextRequestID++;
+		return new Promise<Buffer<ArrayBuffer>>((resolve: (data: Buffer<ArrayBuffer>) => void, reject: (reason: any) => void) =>
+		{
+			this.responseCallback[requestID] = (packetHeader: any, data: Buffer<ArrayBuffer>) =>
+			{
+				if (packetHeader.errorCode === 0)
+				{
+					resolve(data);
+				} else
+				{
+					const msg = (packetHeader.errorCode in ErrorMessages) ? ErrorMessages[packetHeader.errorCode] : `error code ${packetHeader.errorCode}`;
+					reject(msg);
+				}
+			};
+			this.client?.write(packet);
+		});
 	}
 
 	updateCurrentRegisters(data: Buffer<ArrayBuffer>): void
 	{
 		const body = bin.decode(RegisterResponsePacket, data);
+		//console.log(`UPDATEREGS: ${JSON.stringify(body)}`);
 		for (const r of body.registers)
 		{
 			this.currentRegisters[r.registerID] = r.registerValue;
 		}
 	}
 
-	connect(callback: () => void)
+	async connect(resolve: () => void): Promise<void>
 	{
 		this.client = new net.Socket();
-		this.client.on('connect', () => {
+		this.client.on('connect', async () => {
 			this.connected = true;
-			console.log("Connected to binary monitor");
-			callback();
+			this.running = true;
+			console.info("Connected to binary monitor");
 
-			this.sendCommand(Command.RegistersAvailable, bin.encode(RegistersAvailableCommandPacket, { memSpace: 0 }), (data: Buffer<ArrayBuffer>) =>
+			const responseData = await this.sendCommand(Command.RegistersAvailable, bin.encode(RegistersAvailableCommandPacket, { memSpace: 0 }));
+
+			//console.log("Got registers available response");
+
+			const response = bin.decode(RegistersAvailableResponsePacket, responseData);
+			for (const r of response.registers)
 			{
-				const response = bin.decode(RegistersAvailableResponsePacket, data);
-				for (const r of response.registers)
-				{
-					const register: Register = { name: r.name, size: r.registerSize, ID: r.registerID };
-					this.registers.push(register);
-					this.registersByID[register.ID] = register;
-					this.registersByName[register.name] = register;
-				}
-				this.sendCommand(Command.Exit);
-			});
+				const register: Register = { name: r.name, size: r.registerSize, ID: r.registerID };
+				this.allRegisters.push(register);
+				this.registersByID[register.ID] = register;
+				this.registersByName[register.name] = register;
+			}
+			await this.sendCommand(Command.Exit);
+
+			//console.log("Resolving connect");
+
+			resolve();
 		});
-		this.client.on('data', (data: Buffer<ArrayBuffer>) => {
-			const packetHeader = bin.decode(ResponsePacketHeader, data);
+		this.client.on('data', async (data: Buffer<ArrayBuffer>) => {
 
-			if (packetHeader.requestID !== 0xffffffff)
+			//console.log(`RECEIVED ${data.length} BYTES (CURRENT: ${this.dataIn?.length})`);
+
+			if (this.dataIn && this.dataIn.length)
 			{
-				if (packetHeader.requestID in this.responseCallback)
-				{
-					this.responseCallback[packetHeader.requestID](data.subarray(12));
-					delete this.responseCallback[packetHeader.requestID];
-				} else
-				{
-					console.error(`Unexpected response for request ${packetHeader.requestID}, type ${packetHeader.responseType}`);
-				}
+				this.dataIn = Buffer.concat([this.dataIn, data]);
 			} else
 			{
-				switch (packetHeader.responseType)
+				this.dataIn = data;
+			}
+
+			while (true)
+			{
+				if (!this.currentHeader)
 				{
-					case Response.Register:
-						console.log("REGS");
-						this.updateCurrentRegisters(data.subarray(12));
+					if (this.dataIn.length < 12)
+					{
 						break;
+					}
 
-					case Response.Checkpoint:
-						this.sendCommand(Command.RegistersGet, bin.encode(RegistersGetCommandPacket, { memSpace: MemorySpace.MainMemory }), (data: Buffer<ArrayBuffer>) =>
+					this.currentHeader = bin.decode(ResponsePacketHeader, this.dataIn);
+					this.dataIn = this.dataIn.subarray(12);
+				}
+
+				if (!this.currentHeader || this.dataIn.length < this.currentHeader.length)
+				{
+					break;
+				}
+
+				//console.log(`REQUEST ${this.currentHeader.requestID} TYPE ${this.currentHeader.responseType} LENGTH ${this.currentHeader.length} (HAVE ${this.dataIn.length})`);
+
+				const header = this.currentHeader;
+				this.currentHeader = undefined;
+
+				const packetData = this.dataIn.subarray(0, header.length);
+				this.dataIn = this.dataIn.subarray(header.length);
+
+				//console.log(`NOW HAVE ${this.dataIn.length}`);
+
+				if (header.requestID !== 0xffffffff)
+				{
+					if (header.requestID in this.responseCallback)
+					{
+						//console.log(`HAVE HANDLER`);
+
+						this.responseCallback[header.requestID](header, packetData);
+						delete this.responseCallback[header.requestID];
+					} else
+					{
+						console.error(`Unexpected response for request ${header.requestID}, type ${header.responseType}`);
+					}
+				} else
+				{
+					//console.log(`NO HANDLER`);
+
+					switch (header.responseType)
+					{
+						case Response.Register:
+							//console.log("REGS");
+							this.updateCurrentRegisters(packetData);
+							break;
+
+						case Response.Checkpoint:
 						{
-							this.updateCurrentRegisters(data);
-							if (this.breakpointCallback)
-							{
-								this.breakpointCallback();
-							}
-						});
-						break;
+							//console.log(`CHECKPOINT`);
 
-					default:
-						console.error(`Unexpected non-response packet type ${packetHeader.responseType}`);
-						break;
+							const registerData = await this.sendCommand(Command.RegistersGet, bin.encode(RegistersGetCommandPacket, { memSpace: MemorySpace.MainMemory }));
+							this.updateCurrentRegisters(registerData);
+							this.emit('breakpoint');
+							break;
+						}
+
+						case Response.Stopped:
+							this.running = false;
+							this.emit('stopped');
+							break;
+
+						case Response.Resumed:
+							this.running = true;
+							this.emit('resumed');
+							break;
+
+						default:
+							console.error(`Unexpected non-response packet type ${header.responseType}`);
+							break;
+					}
 				}
 			}
 		});
@@ -445,68 +552,67 @@ export class ViceMonitor
 			{
 				setTimeout(() =>
 				{
-					console.log("Retrying connect...");
-					this.connect(callback);
+					//console.log("Retrying connect...");
+					this.client?.connect(6510, '127.0.0.1');
 				}, 500);
 			} else
 			{
-				console.log(`Error: ${err}`);
+				console.error(`Error: ${err}`);
 			}
 		});
 		this.client.connect(6510, '127.0.0.1');
 	}
 
-	public async start(program: string, callback: () => void)
+	public async start(program: string)
 	{
 		const configuration = vscode.workspace.getConfiguration('vice-ca65-debug');
 		const cmd = `${configuration.get('viceBinary')} -binarymonitor -binarymonitoraddress 127.0.0.1:6510 -autostart ${program}`;
 		this.process = exec(cmd);
-		this.connect(callback);
-	}
 
-	public stop(callback: () => void)
-	{
-		this.sendCommand(Command.Quit, undefined, () => callback());
-	}
-
-	public pause(callback: () => void)
-	{
-		this.sendCommand(Command.Ping, undefined, () => callback());
-	}
-
-	public resume(callback: () => void)
-	{
-		this.sendCommand(Command.Exit, undefined, () => callback());
-	}
-
-	public step(over: boolean, callback: () => void)
-	{
-		this.sendCommand(Command.AdvanceInstructions, bin.encode(AdvanceInstructionsCommandPacket, { stepOver: over, numInstructions: 1}), () =>
+		return new Promise<void>((resolve: () => void, reject: (reason:any) => void) =>
 		{
-			this.sendCommand(Command.RegistersGet, bin.encode(RegistersGetCommandPacket, { memSpace: MemorySpace.MainMemory }), (data: Buffer<ArrayBuffer>) =>
-			{
-				this.updateCurrentRegisters(data);
-				callback();
-			});
+			this.connect(resolve);
 		});
 	}
 
-	public untilReturn(callback: () => void)
+	public async restart(program: string)
 	{
-		this.sendCommand(Command.ExecuteUntilReturn, undefined, () =>
-		{
-			this.sendCommand(Command.RegistersGet, bin.encode(RegistersGetCommandPacket, { memSpace: MemorySpace.MainMemory }), (data: Buffer<ArrayBuffer>) =>
-			{
-				this.updateCurrentRegisters(data);
-				callback();
-			});
-		});
+		await this.sendCommand(Command.Autostart, bin.encode(AutostartCommandPacket, { runAfterLoading: true, fileIndex: 0, fileName: program }));
 	}
 
-	public setBreakpoint(address: number, callback: (breakpointID: number) => void)
+	public async stop()
 	{
-		console.log(`SETTING CHECKPOINT AT ${address}`);
-		this.sendCommand(Command.CheckpointSet, bin.encode(CheckpointSetCommandPacket,
+		await this.sendCommand(Command.Quit);
+	}
+
+	public async pause()
+	{
+		await this.sendCommand(Command.Ping);
+	}
+
+	public async resume()
+	{
+		await this.sendCommand(Command.Exit);
+	}
+
+	public async step(over: boolean)
+	{
+		await this.sendCommand(Command.AdvanceInstructions, bin.encode(AdvanceInstructionsCommandPacket, { stepOver: over, numInstructions: 1}));
+		const registerData= await this.sendCommand(Command.RegistersGet, bin.encode(RegistersGetCommandPacket, { memSpace: MemorySpace.MainMemory }));
+		this.updateCurrentRegisters(registerData);
+	}
+
+	public async untilReturn()
+	{
+		await this.sendCommand(Command.ExecuteUntilReturn);
+		const registerData= await this.sendCommand(Command.RegistersGet, bin.encode(RegistersGetCommandPacket, { memSpace: MemorySpace.MainMemory }));
+		this.updateCurrentRegisters(registerData);
+	}
+
+	public async setBreakpoint(address: number, condition: string | undefined = undefined): Promise<number | undefined>
+	{
+		//console.log(`SETTING CHECKPOINT AT ${address}`);
+		const responseData = await this.sendCommand(Command.CheckpointSet, bin.encode(CheckpointSetCommandPacket,
 		{
 			startAddress: address,
 			endAddress: address,
@@ -515,20 +621,32 @@ export class ViceMonitor
 			cpuOperation: CPUOperation.Exec,
 			temporary: false,
 			memSpace: MemorySpace.MainMemory,
-		}), (data: Buffer<ArrayBuffer>) =>
+		}));
+		const response = bin.decode(CheckpointResponsePacket, responseData);
+		if (condition)
 		{
-			const response = bin.decode(CheckpointResponsePacket, data);
-			console.log(`SET CHECKPOINT ${response.checkpoint} at ${response.startAddress}`);
-			callback(response.checkpoint);
-		});
+			try
+			{
+				await this.sendCommand(Command.ConditionSet, bin.encode(ConditionSetCommandPacket, { checkpoint: response.checkpoint, expression: condition }));
+			} catch (error)
+			{
+				console.error(`failed to set condition: ${error}`);
+
+				await this.removeBreakpoint(response.checkpoint);
+				return undefined;
+			}
+		}
+
+		//console.log(`SET CHECKPOINT ${response.checkpoint} at ${response.startAddress}`);
+		return response.checkpoint;
 	}
 
-	public removeBreakpoint(breakpointID: number)
+	public async removeBreakpoint(breakpointID: number)
 	{
-		this.sendCommand(Command.CheckpointDelete, bin.encode(CheckpointDeleteCommandPacket, { checkpoint: breakpointID }));
+		await this.sendCommand(Command.CheckpointDelete, bin.encode(CheckpointDeleteCommandPacket, { checkpoint: breakpointID }));
 	}
 
-	public PC(): number
+	public pc(): number
 	{
 		if (! ('PC' in this.registersByName))
 		{
@@ -539,16 +657,47 @@ export class ViceMonitor
 		}
 	}
 
-	public Registers(): ViceValue[]
+	public registers(): ViceValue[]
 	{
 		var registerValues: ViceValue[] = [];
-		for (const r of this.registers)
+		for (const r of this.allRegisters)
 		{
 			if (r.ID in this.currentRegisters)
 			{
-				registerValues.push(new ViceValue(r.name, this.currentRegisters[r.ID], r.size));
+				registerValues.push(new ViceValue(r.name, this.currentRegisters[r.ID], r.size, r.name === "FL" ? ValueType.Flags : ValueType.Numeric));
 			}
 		}
 		return registerValues;
+	}
+
+	public async setRegister(name: string, value: number)
+	{
+		if (name in this.registersByName)
+		{
+			const reg = this.registersByName[name];
+			await this.sendCommand(Command.RegistersSet, bin.encode(RegistersSetCommandPacket, { memSpace: MemorySpace.MainMemory, registers: [ { itemSize: 3, registerID: reg.ID, registerValue: value }]}));
+			const registerData= await this.sendCommand(Command.RegistersGet, bin.encode(RegistersGetCommandPacket, { memSpace: MemorySpace.MainMemory }));
+			this.updateCurrentRegisters(registerData);
+		}
+	}
+
+	public isRunning(): boolean
+	{
+		return this.running;
+	}
+
+	public async readMemory(address: number, size: number): Promise<number[]>
+	{
+		const responseData = await this.sendCommand(Command.MemoryGet, bin.encode(MemoryGetCommandPacket, { sideEffects: false, startAddress: address, endAddress: address + size - 1, memSpace: MemorySpace.MainMemory, bankID: 0 }));
+		const response = bin.decode(MemoryGetResponsePacket, responseData);
+		return response.memory;
+	}
+
+	public async writeMemory(address: number, data: number[])
+	{
+		const packet = bin.encode(MemorySetCommandPacket, { sideEffects: false, startAddress: address, endAddress: address + data.length - 1, memorySpace: MemorySpace.MainMemory, bankID: 0 });
+		const packetData = new Uint8Array(data);
+		const packetWithData = Buffer.concat([ packet, packetData ]);
+		await this.sendCommand(Command.MemorySet, packetWithData);
 	}
 };

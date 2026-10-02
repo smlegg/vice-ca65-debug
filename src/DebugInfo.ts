@@ -67,6 +67,13 @@ export interface AbsoluteSpan
 	span: number;
 };
 
+export interface DebugValue
+{
+	value: number;
+	size?: number;
+	type: 'address' | 'literal';
+}
+
 export class DebugInfo
 {
 	files: string[] = [];
@@ -79,6 +86,8 @@ export class DebugInfo
 	orderedSpans: AbsoluteSpan[] = [];
 	linesBySpan: {[span: number]: number[]} = {};
 	fileLines: number[][] = [];
+	labelsByName: {[name: string]: DebugInfoSymbol} = {};
+	equatesByName: {[name: string]: DebugInfoSymbol} = {};
 
 	public constructor(fileName: string)
 	{
@@ -90,7 +99,7 @@ export class DebugInfo
 		for (const line of lines)
 		{
 			const [ cmd, cmdParams ] = line.split('\t');
-			var params: { [name: string]: string } = {};
+			let params: { [name: string]: string } = {};
 			if (cmdParams)
 			{
 				for (const p of cmdParams.split(','))
@@ -114,13 +123,13 @@ export class DebugInfo
 					break;
 				case 'mod':
 					this.modules[parseInt(params['id'])] = {
-						name: params['name'],
+						name: params['name'].slice(1, -1),
 						file: parseInt(params['file'])
 					};
 					break;
 				case 'seg':
 					this.segments[parseInt(params['id'])] = {
-						name: params['name'],
+						name: params['name'].slice(1, -1),
 						start: parseInt(params['start']),
 						size: parseInt(params['size'])
 					};
@@ -134,7 +143,7 @@ export class DebugInfo
 					break;
 				case 'scope':
 					this.scopes[parseInt(params['id'])] = {
-						name: params['name'],
+						name: params['name'].slice(1, -1),
 						module: parseInt(params['mod']),
 						size: params['size'] ? parseInt(params['size']) : undefined,
 						spans: params['span'] ? Array.from(params['span'].split('+'), (x) => parseInt(x)) : [],
@@ -143,7 +152,7 @@ export class DebugInfo
 					break;
 				case 'sym':
 					this.symbols[parseInt(params['id'])] = {
-						name: params['name'],
+						name: params['name'].slice(1, -1),
 						addrSize: params['addrsize'] as AddressSize,
 						size: params['size'] ? parseInt(params['size']) : undefined,
 						scope: params['scope'] ? parseInt(params['scope']) : undefined,
@@ -168,6 +177,7 @@ export class DebugInfo
 		{
 			this.fileLines.push([]);
 		}
+
 		for (const [index, line] of this.lines.entries())
 		{
 			for (const span of line.spans)
@@ -184,9 +194,25 @@ export class DebugInfo
 			this.fileLines[line.file].push(index);
 		}
 
-		for (var fileLines of this.fileLines)
+		for (let fileLines of this.fileLines)
 		{
 			fileLines.sort((a, b) => this.lines[a].line - this.lines[b].line);
+		}
+
+		for (let sym of this.symbols)
+		{
+			const scope = sym.scope ? this.scopes[sym.scope] : undefined;
+			const fullName = scope && scope.name.length ? `${scope.name}::${sym.name}` : sym.name;
+			switch (sym.type)
+			{
+				case 'lab':
+					this.labelsByName[fullName] = sym;
+					break;
+
+				case 'equ':
+					this.equatesByName[fullName] = sym;
+					break;
+			}
 		}
 	}
 
@@ -230,5 +256,33 @@ export class DebugInfo
 		const span = this.spans[spanIndex];
 
 		return this.segments[span.segment].start + span.start;
+	}
+
+	public symbol(name: string) : DebugValue | undefined
+	{
+		if (name in this.labelsByName)
+		{
+			const sym = this.labelsByName[name];
+			if (sym.value)
+			{
+				return {
+					value: sym.value,
+					size: sym.size,
+					type: 'address'
+				};
+			}
+		} else if (name in this.equatesByName)
+		{
+			const sym = this.equatesByName[name];
+			if (sym.value)
+			{
+				return {
+					value: sym.value,
+					type: 'literal'
+				};
+			}
+		}
+
+		return undefined;
 	}
 }
