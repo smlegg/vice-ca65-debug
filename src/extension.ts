@@ -106,6 +106,10 @@ class ViceCa65DebugSession extends LoggingDebugSession
 			this.nextVariableRef = 2;
 			this.temporaryDataRefs = [];
 		});
+		this.vice.on('terminated', () =>
+		{
+			this.sendEvent(new TerminatedEvent());
+		});
 
 		await this.vice.start(args.program);
 

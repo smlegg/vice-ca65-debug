@@ -5,6 +5,7 @@ import * as bin from '@lickle/bin';
 import { type Codec } from '@lickle/bin';
 import { EventEmitter } from 'events';
 import { NamedViceValue, ViceValue, ValueType } from './ViceValue.js';
+import * as path from 'path';
 
 enum MemorySpace
 {
@@ -534,7 +535,11 @@ export class ViceMonitor extends EventEmitter
 	{
 		const configuration = vscode.workspace.getConfiguration('vice-ca65-debug');
 		const cmd = `${configuration.get('viceBinary')} -binarymonitor -binarymonitoraddress 127.0.0.1:6510 -autostart ${program}`;
-		this.process = exec(cmd);
+		this.process = exec(cmd, { cwd: path.dirname(program) });
+		this.process.on('close', () =>
+		{
+			this.emit('terminated');
+		});
 
 		return new Promise<void>((resolve: () => void, reject: (reason:any) => void) =>
 		{
