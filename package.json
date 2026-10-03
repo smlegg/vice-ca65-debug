@@ -3,6 +3,8 @@
   "displayName": "vice-ca65-debug",
   "description": "Debug extension for debugging CA65 code in VICE",
   "version": "0.0.1",
+  "license": "MIT",
+  "repository": "https://github.com/smlegg/vice-ca65-debug",
   "type": "module",
   "engines": {
     "vscode": "^1.138.0"
