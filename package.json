@@ -63,7 +63,8 @@
   },
   "dependencies": {
     "@lickle/bin": "^0.3.1",
-    "@algorithm.ts/binary-search": "^4.0.5"
+    "@algorithm.ts/binary-search": "^4.0.5",
+    "@vscode/debugadapter": "^1.68.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.138.0",
@@ -73,8 +74,7 @@
     "eslint": "^10.5.0",
     "typescript": "^6.0.3",
     "@vscode/test-cli": "^0.0.15",
-    "@vscode/test-electron": "^3.0.0",
-    "@vscode/debugadapter": "^1.68.0"
+    "@vscode/test-electron": "^3.0.0"
   },
   "overrides": {
     "diff": "^8.0.4",
