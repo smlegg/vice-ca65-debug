@@ -4,6 +4,7 @@ import * as net from 'net';
 import * as bin from '@lickle/bin';
 import { type Codec } from '@lickle/bin';
 import { EventEmitter } from 'events';
+import { NamedViceValue, ViceValue, ValueType } from './ViceValue.js';
 
 enum MemorySpace
 {
@@ -344,40 +345,6 @@ interface Register
 	ID: number;
 };
 
-enum ValueType
-{
-	Numeric,
-	Flags
-};
-
-export class ViceValue
-{
-	name: string;
-	value: number;
-	bits: number;
-	type: ValueType;
-
-	constructor(name: string, value: number, bits: number, type: ValueType)
-	{
-		this.name = name;
-		this.value = value;
-		this.bits = bits;
-		this.type = type;
-	}
-
-	public toString(): string
-	{
-		switch (this.type)
-		{
-			case ValueType.Numeric:
-				return `$${this.value.toString(16).padStart(this.bits / 4, '0')}`;
-
-			case ValueType.Flags:
-				return `${this.value & 0x80 ? 'N' : '-'}${this.value & 0x40 ? 'V' : '-'}-${this.value & 0x10 ? 'B' : '-'}${this.value & 0x08 ? 'D' : '-'}${this.value & 0x04 ? 'I' : '-'}${this.value & 0x02 ? 'Z' : '-'}${this.value & 0x01 ? 'C' : '-'}`;
-		}
-	}
-};
-
 export class ViceMonitor extends EventEmitter
 {
 	process: ChildProcess | null = null;
@@ -609,16 +576,26 @@ export class ViceMonitor extends EventEmitter
 		this.updateCurrentRegisters(registerData);
 	}
 
-	public async setBreakpoint(address: number, condition: string | undefined = undefined): Promise<number | undefined>
+	public async setBreakpoint(address: number, size: number, type: 'read' | 'write' | 'readWrite' | 'exec', condition: string | undefined = undefined): Promise<number | undefined>
 	{
 		//console.log(`SETTING CHECKPOINT AT ${address}`);
+
+		let cpuOperation = CPUOperation.Exec;
+		switch (type)
+		{
+			case 'read': cpuOperation = CPUOperation.Load; break;
+			case 'write': cpuOperation = CPUOperation.Store; break;
+			case 'readWrite': cpuOperation = CPUOperation.Load | CPUOperation.Store; break;
+			case 'exec': cpuOperation = CPUOperation.Exec; break;
+		}
+
 		const responseData = await this.sendCommand(Command.CheckpointSet, bin.encode(CheckpointSetCommandPacket,
 		{
 			startAddress: address,
-			endAddress: address,
+			endAddress: address + size - 1,
 			stopWhenHit: true,
 			enabled: true,
-			cpuOperation: CPUOperation.Exec,
+			cpuOperation: cpuOperation,
 			temporary: false,
 			memSpace: MemorySpace.MainMemory,
 		}));
@@ -657,14 +634,14 @@ export class ViceMonitor extends EventEmitter
 		}
 	}
 
-	public registers(): ViceValue[]
+	public registers(): NamedViceValue[]
 	{
-		var registerValues: ViceValue[] = [];
+		var registerValues: NamedViceValue[] = [];
 		for (const r of this.allRegisters)
 		{
 			if (r.ID in this.currentRegisters)
 			{
-				registerValues.push(new ViceValue(r.name, this.currentRegisters[r.ID], r.size, r.name === "FL" ? ValueType.Flags : ValueType.Numeric));
+				registerValues.push({ name: r.name, value: new ViceValue(this.currentRegisters[r.ID], r.size, r.name === "FL" ? ValueType.Flags : ValueType.Numeric) });
 			}
 		}
 		return registerValues;
