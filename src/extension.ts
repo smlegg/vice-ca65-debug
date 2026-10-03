@@ -13,6 +13,7 @@ interface ViceCa65LaunchRequestArguments extends DebugProtocol.LaunchRequestArgu
 
 interface VariableRef
 {
+	name: string;
 	data: number[];
 	address: number;
 };
@@ -416,43 +417,54 @@ class ViceCa65DebugSession extends LoggingDebugSession
 
 	protected override async dataBreakpointInfoRequest(response: DebugProtocol.DataBreakpointInfoResponse, args: DebugProtocol.DataBreakpointInfoArguments, request?: DebugProtocol.Request): Promise<void>
 	{
-		if (args.variablesReference !== 1)
+		if (args.variablesReference === 1)
 		{
-			if (args.asAddress)
-			{
-				const address = parseInt(args.name);
-				if (address >=0 && address <= 0xffff)
-				{
-					response.body = {
-						dataId: `a${address.toString()}`,
-						description: args.name,
-						accessTypes: [ 'read', 'write' ]
-					};
-				}
-			} else
-			{
-				const expr = await this.parseExpression(args.name);
+			return;
+		}
 
-				let dataId;
-				if (args.frameId)
-				{
-					dataId = `t${this.temporaryDataRefs.length}`;
-					this.temporaryDataRefs.push(expr);
-				} else
-				{
-					dataId = `p${this.dataRefs.length}`;
-					this.dataRefs.push(expr);
-				}
-
+		if (args.asAddress)
+		{
+			const address = parseInt(args.name);
+			if (address >=0 && address <= 0xffff)
+			{
 				response.body = {
-					dataId: dataId,
+					dataId: `a${address.toString()}`,
 					description: args.name,
 					accessTypes: [ 'read', 'write' ]
 				};
 			}
+		} else if (args.variablesReference)
+		{
+			const index = parseInt(args.name);
+			const address = this.variableRefs[args.variablesReference].address + index;
+			response.body = {
+				dataId: `a${address.toString()}`,
+				description: `${this.variableRefs[args.variablesReference].name}[${index}]`,
+				accessTypes: [ 'read', 'write' ]
+			};
+		} else
+		{
+			const expr = await this.parseExpression(args.name);
 
-			this.sendResponse(response);
+			let dataId;
+			if (args.frameId)
+			{
+				dataId = `t${this.temporaryDataRefs.length}`;
+				this.temporaryDataRefs.push(expr);
+			} else
+			{
+				dataId = `p${this.dataRefs.length}`;
+				this.dataRefs.push(expr);
+			}
+
+			response.body = {
+				dataId: dataId,
+				description: args.name,
+				accessTypes: [ 'read', 'write' ]
+			};
 		}
+
+		this.sendResponse(response);
 	}
 
 	protected override async evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments, request?: DebugProtocol.Request): Promise<void>
@@ -488,7 +500,7 @@ class ViceCa65DebugSession extends LoggingDebugSession
 						variableRef = this.nextVariableRef++;
 					}
 
-					this.variableRefs[variableRef] = { data: data, address: expr.value };
+					this.variableRefs[variableRef] = { name: args.expression, data: data, address: expr.value };
 
 					response.body = {
 						result: new ViceValue(expr.value, 16).toString(),
