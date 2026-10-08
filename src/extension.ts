@@ -84,6 +84,7 @@ class ViceCa65DebugSession extends LoggingDebugSession
 			response.body.supportsEvaluateForHovers = true;
 			response.body.supportsDataBreakpoints = true;
 			response.body.supportsDataBreakpointBytes = true;
+			response.body.supportsGotoTargetsRequest = true;
 		}
 		this.sendResponse(response);
 	}
@@ -541,6 +542,34 @@ class ViceCa65DebugSession extends LoggingDebugSession
 			await this.vice?.writeMemory(expr.value, data);
 		}
 		this.sendResponse(response);
+	}
+
+	protected override async gotoRequest(response: DebugProtocol.GotoResponse, args: DebugProtocol.GotoArguments, request?: DebugProtocol.Request): Promise<void>
+	{
+		await this.vice?.setRegister("PC", args.targetId);
+		this.sendResponse(response);
+		this.sendEvent(new StoppedEvent("goto", 1));
+	}
+
+	protected override gotoTargetsRequest(response: DebugProtocol.GotoTargetsResponse, args: DebugProtocol.GotoTargetsArguments, request?: DebugProtocol.Request): void
+	{
+		if (args.source.name)
+		{
+			const address = this.debugInfo?.address({ fileName: args.source.name, line: args.line });
+			if (address !== undefined)
+			{
+				response.body = {
+					targets: [
+						{
+							id: address,
+							label: args.source.name,
+							line: args.line
+						}
+					]
+				};
+				this.sendResponse(response);
+			}
+		}
 	}
 }
 
