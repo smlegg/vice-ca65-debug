@@ -271,21 +271,21 @@ class ViceCa65DebugSession extends LoggingDebugSession
 
 	protected override async nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments, request?: DebugProtocol.Request): Promise<void>
 	{
-		this.vice?.step(true);
+		await this.vice?.step(true);
 		this.sendEvent(new StoppedEvent("step", 1));
 		this.sendResponse(response);
 	}
 
 	protected override async stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments, request?: DebugProtocol.Request): Promise<void>
 	{
-		this.vice?.step(false);
+		await this.vice?.step(false);
 		this.sendEvent(new StoppedEvent("step", 1));
 		this.sendResponse(response);
 	}
 
 	protected override async stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments, request?: DebugProtocol.Request): Promise<void>
 	{
-		this.vice?.untilReturn();
+		await this.vice?.untilReturn();
 		this.sendEvent(new StoppedEvent("step", 1));
 		this.sendResponse(response);
 	}
