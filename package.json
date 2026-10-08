@@ -55,6 +55,9 @@
     ]
 
   },
+  "extensionDependencies": [
+    "tlgkccampbell.code-ca65"
+  ],
   "scripts": {
     "vscode:prepublish": "yarn run compile",
     "compile": "tsc -p ./",
