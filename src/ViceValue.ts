@@ -22,7 +22,8 @@ export class ViceValue
 		switch (this.type)
 		{
 			case ValueType.Numeric:
-				return `$${this.value.toString(16).padStart(this.bits / 4, '0')} (${this.value.toString()})`;
+				let chr = (this.bits === 8) ? ` '${String.fromCharCode(this.value)}'` : "";
+				return `$${this.value.toString(16).padStart(this.bits / 4, '0')} (${this.value.toString()})${chr}`;
 
 			case ValueType.Flags:
 				return `${this.value & 0x80 ? 'N' : '-'}${this.value & 0x40 ? 'V' : '-'}-${this.value & 0x10 ? 'B' : '-'}${this.value & 0x08 ? 'D' : '-'}${this.value & 0x04 ? 'I' : '-'}${this.value & 0x02 ? 'Z' : '-'}${this.value & 0x01 ? 'C' : '-'}`;
