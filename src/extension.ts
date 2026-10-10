@@ -492,8 +492,9 @@ class ViceCa65DebugSession extends LoggingDebugSession
 				}
 			} else
 			{
+				let bits = ((expr.value > 65535) || (expr.value < -32768)) ? 32 : (((expr.value > 255) || (expr.value < -128)) ? 16 :8);
 				response.body = {
-					result: expr.value.toString(),
+					result: new ViceValue(expr.value, bits).toString(),
 					variablesReference: 0
 				};
 			}
