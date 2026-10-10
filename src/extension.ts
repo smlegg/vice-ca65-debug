@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import { ContinuedEvent, InitializedEvent, LoggingDebugSession, StoppedEvent, TerminatedEvent, ThreadEvent, Variable } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
-import { DebugInfo, DebugValue } from './DebugInfo.js';
+import { DebugInfo } from './DebugInfo.js';
 import { ViceMonitor } from './ViceMonitor.js';
 import { ViceValue  } from './ViceValue.js';
+import { parseExpression, Expression } from './ExpressionParser.js';
 
 interface ViceCa65LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments
 {
@@ -18,14 +19,6 @@ interface VariableRef
 	address: number;
 };
 
-interface Expression
-{
-	value: number;
-	size: number;
-	literal: boolean;
-	array: boolean;
-}
-
 class ViceCa65DebugSession extends LoggingDebugSession
 {
 	debugInfo: DebugInfo | null = null;
@@ -38,38 +31,10 @@ class ViceCa65DebugSession extends LoggingDebugSession
 	dataRefs: Expression[] = [];
 	temporaryDataRefs: Expression[] = [];
 
-	async parseExpression(expr: string): Promise<Expression>
-	{
-		const deref = expr.startsWith('*');
-		if (deref)
-		{
-			expr = expr.substring(1);
-		}
-		const parts = expr.split(',');
-		const exprSize = (parts.length === 2) ? parseInt(parts[1]) : undefined;
-		const symbolValue = this.debugInfo?.symbol(parts[0]);
-
-		let value = symbolValue?.value ?? 0;
-		if (symbolValue?.type === 'address' && deref)
-		{
-			const addressData = await this.vice?.readMemory(value, 2);
-			if (addressData)
-			{
-				value = addressData[0] | (addressData[1] << 8);
-			}
-		}
-
-		return {
-			value: value,
-			size: exprSize ? exprSize : (deref ? 1 : (symbolValue?.size ?? 1)),
-			literal: symbolValue?.type === 'literal',
-			array: exprSize !== undefined
-		};
-	}
-
 	public constructor()
 	{
 		super();
+
 	}
 
 	protected override initializeRequest(response: DebugProtocol.InitializeResponse, args: DebugProtocol.InitializeRequestArguments): void
@@ -445,24 +410,31 @@ class ViceCa65DebugSession extends LoggingDebugSession
 			};
 		} else
 		{
-			const expr = await this.parseExpression(args.name);
+			try
+			{
+				const expr = await parseExpression(args.name, this.debugInfo, this.vice);
+				let dataId;
+				if (args.frameId)
+				{
+					dataId = `t${this.temporaryDataRefs.length}`;
+					this.temporaryDataRefs.push(expr);
+				} else
+				{
+					dataId = `p${this.dataRefs.length}`;
+					this.dataRefs.push(expr);
+				}
 
-			let dataId;
-			if (args.frameId)
-			{
-				dataId = `t${this.temporaryDataRefs.length}`;
-				this.temporaryDataRefs.push(expr);
-			} else
-			{
-				dataId = `p${this.dataRefs.length}`;
-				this.dataRefs.push(expr);
+				response.body = {
+					dataId: dataId,
+					description: args.name,
+					accessTypes: [ 'read', 'write' ]
+				};
 			}
-
-			response.body = {
-				dataId: dataId,
-				description: args.name,
-				accessTypes: [ 'read', 'write' ]
-			};
+			catch (e)
+			{
+				response.success = false;
+				response.message = `${e}`;
+			}
 		}
 
 		this.sendResponse(response);
@@ -470,58 +442,66 @@ class ViceCa65DebugSession extends LoggingDebugSession
 
 	protected override async evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments, request?: DebugProtocol.Request): Promise<void>
 	{
-		const expr = await this.parseExpression(args.expression);
-		if (!expr.literal)
+		try
 		{
-			const data = await this.vice?.readMemory(expr.value, expr.size);
-			if (data)
+			const expr = await parseExpression(args.expression, this.debugInfo, this.vice);
+			if (!expr.literal)
 			{
-				if (data.length <= 2 && !expr.array)
+				const data = await this.vice?.readMemory(expr.value, expr.size);
+				if (data)
 				{
-					let n = 0;
-					if (data.length === 1)
+					if (data.length <= 2 && !expr.array)
 					{
-						n = data[0];
+						let n = 0;
+						if (data.length === 1)
+						{
+							n = data[0];
+						} else
+						{
+							n = data[0] | (data[1] << 8);
+						}
+						response.body = {
+							result: new ViceValue(n, data.length * 8).toStringWithAddress(expr.value),
+							variablesReference: 0
+						};
 					} else
 					{
-						n = data[0] | (data[1] << 8);
+						let variableRef = 0;
+						if (args.expression in this.variableRefsByName)
+						{
+							variableRef = this.variableRefsByName[args.expression];
+						} else
+						{
+							variableRef = this.nextVariableRef++;
+						}
+
+						this.variableRefs[variableRef] = { name: args.expression, data: data, address: expr.value };
+
+						response.body = {
+							result: new ViceValue(expr.value, 16).toString(),
+							variablesReference: variableRef,
+							indexedVariables: data.length
+						};
 					}
-					response.body = {
-						result: new ViceValue(n, data.length * 8).toStringWithAddress(expr.value),
-						variablesReference: 0
-					};
 				} else
 				{
-					let variableRef = 0;
-					if (args.expression in this.variableRefsByName)
-					{
-						variableRef = this.variableRefsByName[args.expression];
-					} else
-					{
-						variableRef = this.nextVariableRef++;
-					}
-
-					this.variableRefs[variableRef] = { name: args.expression, data: data, address: expr.value };
-
 					response.body = {
-						result: new ViceValue(expr.value, 16).toString(),
-						variablesReference: variableRef,
-						indexedVariables: data.length
+						result: expr.value.toString() ?? "<undefined>",
+						variablesReference: 0
 					};
 				}
 			} else
 			{
 				response.body = {
-					result: expr.value.toString() ?? "<undefined>",
+					result: expr.value.toString(),
 					variablesReference: 0
 				};
 			}
-		} else
+		}
+		catch (e)
 		{
-			response.body = {
-				result: expr.value.toString(),
-				variablesReference: 0
-			};
+			response.success = false;
+			response.message = `${e}`;
 		}
 
 		this.sendResponse(response);
@@ -529,17 +509,26 @@ class ViceCa65DebugSession extends LoggingDebugSession
 
 	protected override async setExpressionRequest(response: DebugProtocol.SetExpressionResponse, args: DebugProtocol.SetExpressionArguments, request?: DebugProtocol.Request): Promise<void>
 	{
-		const expr = await this.parseExpression(args.expression);
-		if (expr.literal)
+		try
 		{
-			return;
-		}
+			const expr = await parseExpression(args.expression, this.debugInfo, this.vice);
 
-		if (expr.size <= 2)
+			if (expr.literal)
+			{
+				return;
+			}
+
+			if (expr.size <= 2)
+			{
+				const newValue = ViceValue.fromString(args.value);
+				const data: number[] = (expr.size === 1) ? [ newValue.value & 0xff ] : [ newValue.value & 0xff, newValue.value >> 8];
+				await this.vice?.writeMemory(expr.value, data);
+			}
+		}
+		catch (e)
 		{
-			const newValue = ViceValue.fromString(args.value);
-			const data: number[] = (expr.size === 1) ? [ newValue.value & 0xff ] : [ newValue.value & 0xff, newValue.value >> 8];
-			await this.vice?.writeMemory(expr.value, data);
+			response.success = false;
+			response.message =`${e}`;
 		}
 		this.sendResponse(response);
 	}
