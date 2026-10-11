@@ -652,6 +652,17 @@ export class ViceMonitor extends EventEmitter
 		return registerValues;
 	}
 
+	public register(name: string): ViceValue | undefined
+	{
+		if (!(name in this.registersByName))
+		{
+			return undefined;
+		}
+
+		const reg = this.registersByName[name];
+		return new ViceValue(this.currentRegisters[reg.ID], reg.size, reg.name === "FL" ? ValueType.Flags : ValueType.Numeric);
+	}
+
 	public async setRegister(name: string, value: number)
 	{
 		if (name in this.registersByName)

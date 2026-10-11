@@ -320,11 +320,24 @@ function pushNumber(str: string, context: ExpressionContext)
 function pushSymbol(str: string, context: ExpressionContext)
 {
 	const sym = context.debugInfo?.symbol(str);
-	if (sym === undefined)
+	if (sym !== undefined)
 	{
-		throw Error(`unknown symbol "${str}`);
+		context.operandStack.push(sym);
+	} else
+	{
+		const reg = context.monitor?.register(str);
+		if (reg !== undefined)
+		{
+			context.operandStack.push({
+				value: reg.value,
+				size: reg.bits / 8,
+				type: 'literal'
+			});
+		} else
+		{
+			throw Error(`unknown symbol "${str}`);
+		}
 	}
-	context.operandStack.push(sym);
 }
 
 export async function parseExpression(str: string, debugInfo: DebugInfo | null, monitor: ViceMonitor | null): Promise<Expression>
