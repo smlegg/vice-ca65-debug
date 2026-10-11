@@ -335,7 +335,7 @@ function pushSymbol(str: string, context: ExpressionContext)
 			});
 		} else
 		{
-			throw Error(`unknown symbol "${str}`);
+			throw Error(`unknown symbol "${str}"`);
 		}
 	}
 }
