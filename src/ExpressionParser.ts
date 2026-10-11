@@ -516,7 +516,8 @@ binary:
 	let isArray = false;
 	if (arraySize !== undefined)
 	{
-		size = parseNumber(arraySize);
+		const arraySizeResult = await parseExpression(arraySize, debugInfo, monitor);
+		size = arraySizeResult.value;
 		type = 'address';
 		isArray = true;
 	}
