@@ -570,15 +570,11 @@ export class ViceMonitor extends EventEmitter
 	public async step(over: boolean)
 	{
 		await this.sendCommand(Command.AdvanceInstructions, bin.encode(AdvanceInstructionsCommandPacket, { stepOver: over, numInstructions: 1}));
-		const registerData= await this.sendCommand(Command.RegistersGet, bin.encode(RegistersGetCommandPacket, { memSpace: MemorySpace.MainMemory }));
-		this.updateCurrentRegisters(registerData);
 	}
 
 	public async untilReturn()
 	{
 		await this.sendCommand(Command.ExecuteUntilReturn);
-		const registerData= await this.sendCommand(Command.RegistersGet, bin.encode(RegistersGetCommandPacket, { memSpace: MemorySpace.MainMemory }));
-		this.updateCurrentRegisters(registerData);
 	}
 
 	public async setBreakpoint(address: number, size: number, type: 'read' | 'write' | 'readWrite' | 'exec', condition: string | undefined = undefined): Promise<number | undefined>

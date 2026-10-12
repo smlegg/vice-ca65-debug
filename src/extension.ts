@@ -30,6 +30,7 @@ class ViceCa65DebugSession extends LoggingDebugSession
 	nextVariableRef: number = 2;
 	dataRefs: Expression[] = [];
 	temporaryDataRefs: Expression[] = [];
+	ignoreStep: boolean = false;
 
 	public constructor()
 	{
@@ -76,6 +77,13 @@ class ViceCa65DebugSession extends LoggingDebugSession
 		this.vice.on('terminated', () =>
 		{
 			this.sendEvent(new TerminatedEvent());
+		});
+		this.vice.on('stopped', () =>
+		{
+			if (!this.ignoreStep)
+			{
+				this.sendEvent(new StoppedEvent("step", 1));
+			}
 		});
 
 		await this.vice.start(args.program);
@@ -238,21 +246,18 @@ class ViceCa65DebugSession extends LoggingDebugSession
 	protected override async nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments, request?: DebugProtocol.Request): Promise<void>
 	{
 		await this.vice?.step(true);
-		this.sendEvent(new StoppedEvent("step", 1));
 		this.sendResponse(response);
 	}
 
 	protected override async stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments, request?: DebugProtocol.Request): Promise<void>
 	{
 		await this.vice?.step(false);
-		this.sendEvent(new StoppedEvent("step", 1));
 		this.sendResponse(response);
 	}
 
 	protected override async stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments, request?: DebugProtocol.Request): Promise<void>
 	{
 		await this.vice?.untilReturn();
-		this.sendEvent(new StoppedEvent("step", 1));
 		this.sendResponse(response);
 	}
 
@@ -261,6 +266,10 @@ class ViceCa65DebugSession extends LoggingDebugSession
 		if (args.breakpoints && args.source.path)
 		{
 			const wasRunning = this.vice?.isRunning();
+			if (wasRunning)
+			{
+				this.ignoreStep = true;
+			}
 
 			const source = args.source.path;
 			if (source in this.breakpointsBySource)
@@ -308,6 +317,7 @@ class ViceCa65DebugSession extends LoggingDebugSession
 
 			if (wasRunning)
 			{
+				this.ignoreStep = false;
 				await this.vice?.resume();
 			}
 		}
@@ -320,6 +330,10 @@ class ViceCa65DebugSession extends LoggingDebugSession
 		if (args.breakpoints)
 		{
 			const wasRunning = this.vice?.isRunning();
+			if (wasRunning)
+			{
+				this.ignoreStep = true;
+			}
 
 			for (const breakpointID of this.dataBreakpoints)
 			{
@@ -373,6 +387,7 @@ class ViceCa65DebugSession extends LoggingDebugSession
 
 			if (wasRunning)
 			{
+				this.ignoreStep = false;
 				await this.vice?.resume();
 			}
 
