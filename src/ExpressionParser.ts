@@ -93,7 +93,7 @@ async function reduceTopOperator(context: ExpressionContext)
 			{
 				throw Error("cannot dereference value, no monitor");
 			}
-			const size = val.size ?? 1;
+			const size = Math.min(2, val.size ?? 1);
 			const mem = await context.monitor.readMemory(val.value, size);
 			let result = 0;
 			for (let i = 0; i < size; i++)
