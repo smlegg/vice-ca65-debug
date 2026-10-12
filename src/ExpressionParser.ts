@@ -271,7 +271,7 @@ async function acceptCloseParenthesis(context: ExpressionContext)
 			throw Error("unexpected ')'");
 		}
 
-		const op = context.operatorStack[context.operandStack.length - 1];
+		const op = context.operatorStack[context.operatorStack.length - 1];
 		switch (op)
 		{
 			case Operator.Parenthesis:
