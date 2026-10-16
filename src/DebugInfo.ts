@@ -219,7 +219,7 @@ export class DebugInfo
 	public sourceLocation(addr: number) : SourceLocation | undefined
 	{
 		const orderdSpanIndex = lowerBound(0, this.orderedSpans.length, x => this.orderedSpans[x].start - addr);
-		if (this.orderedSpans[orderdSpanIndex].span in this.linesBySpan)
+		if (orderdSpanIndex >= 0 && this.orderedSpans[orderdSpanIndex].span in this.linesBySpan)
 		{
 			for (const lineIndex of this.linesBySpan[this.orderedSpans[orderdSpanIndex].span])
 			{
