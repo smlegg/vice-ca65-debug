@@ -218,10 +218,10 @@ export class DebugInfo
 
 	public sourceLocation(addr: number) : SourceLocation | undefined
 	{
-		const orderdSpanIndex = lowerBound(0, this.orderedSpans.length, x => this.orderedSpans[x].start - addr);
-		if (orderdSpanIndex >= 0 && this.orderedSpans[orderdSpanIndex].span in this.linesBySpan)
+		const orderedSpanIndex = lowerBound(0, this.orderedSpans.length, x => this.orderedSpans[x].start - addr);
+		if (orderedSpanIndex >= 0 && orderedSpanIndex < this.orderedSpans.length && this.orderedSpans[orderedSpanIndex].span in this.linesBySpan)
 		{
-			for (const lineIndex of this.linesBySpan[this.orderedSpans[orderdSpanIndex].span])
+			for (const lineIndex of this.linesBySpan[this.orderedSpans[orderedSpanIndex].span])
 			{
 				const line = this.lines[lineIndex];
 				const file = this.files[line.file];
