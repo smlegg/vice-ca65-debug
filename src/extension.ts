@@ -150,9 +150,15 @@ class ViceCa65DebugSession extends LoggingDebugSession
 					source: source,
 					line: sourceLocation?.line ?? 0,
 					column: 0
+				},
+				{
+					id: 69,
+					name: "<unknown>",
+					line: 0,
+					column: 0
 				}
 			],
-			totalFrames: 1
+			totalFrames: 2
 		};
 		this.sendResponse(response);
 	}
