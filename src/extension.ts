@@ -5,6 +5,7 @@ import { DebugInfo } from './DebugInfo.js';
 import { ViceMonitor } from './ViceMonitor.js';
 import { ViceValue  } from './ViceValue.js';
 import { parseExpression, Expression } from './ExpressionParser.js';
+import * as fs from 'fs';
 
 interface ViceCa65LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments
 {
@@ -565,6 +566,56 @@ class ViceCa65DebugSession extends LoggingDebugSession
 			}
 		}
 	}
+
+	protected override async customRequest(command: string, response: DebugProtocol.Response, args: any, request?: DebugProtocol.Request): Promise<void>
+	{
+		switch (command)
+		{
+			case "save":
+			{
+				const variable = args.variable as DebugProtocol.Variable;
+				if (variable && variable.evaluateName)
+				{
+					try
+					{
+						const expr = await parseExpression(variable.evaluateName, this.debugInfo, this.vice);
+						if (!expr.literal)
+						{
+							const data = await this.vice?.readMemory(expr.value, expr.size);
+							if (data)
+							{
+								vscode.window.showSaveDialog(
+								{
+									title: "Save binary data",
+									filters: { "Binary": [ "bin" ] }
+								}).then(fileUri =>
+								{
+									if (fileUri)
+									{
+										fs.writeFile(fileUri?.fsPath, Buffer.from(data), (err) =>
+										{
+											if (err)
+											{
+												throw err;
+											}
+										});
+									}
+								});
+							}
+						}
+					}
+					catch (e)
+					{
+						response.success = false;
+						response.message = `${e}`;
+					}
+				}
+				break;
+			}
+		}
+
+		this.sendResponse(response);
+	}
 }
 
 class ViceCa65DebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory
@@ -578,6 +629,9 @@ class ViceCa65DebugAdapterFactory implements vscode.DebugAdapterDescriptorFactor
 export function activate(context: vscode.ExtensionContext)
 {
 	context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory('vice-ca65', new ViceCa65DebugAdapterFactory()));
+	context.subscriptions.push(vscode.commands.registerCommand("vice-ca65-debug.saveMemory", (arg) => {
+		vscode.debug.activeDebugSession?.customRequest("save", arg);
+	}));
 }
 
 export function deactivate() {}

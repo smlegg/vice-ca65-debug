@@ -52,8 +52,21 @@
       {
         "language": "ca65"
       }
+    ],
+    "menus": {
+      "debug/watch/context": [
+        {
+          "command": "vice-ca65-debug.saveMemory",
+          "when": "debugType == 'vice-ca65'"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "title": "Save memory",
+        "command": "vice-ca65-debug.saveMemory"
+      }
     ]
-
   },
   "extensionDependencies": [
     "tlgkccampbell.code-ca65"
