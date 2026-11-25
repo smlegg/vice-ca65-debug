@@ -490,11 +490,11 @@ export class ViceMonitor extends EventEmitter
 
 						case Response.Checkpoint:
 						{
-							//console.log(`CHECKPOINT`);
+							const response = bin.decode(CheckpointResponsePacket, packetData);
 
 							const registerData = await this.sendCommand(Command.RegistersGet, bin.encode(RegistersGetCommandPacket, { memSpace: MemorySpace.MainMemory }));
 							this.updateCurrentRegisters(registerData);
-							this.emit('breakpoint');
+							this.emit('breakpoint', response.checkpoint);
 							break;
 						}
 

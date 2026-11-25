@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ContinuedEvent, InitializedEvent, LoggingDebugSession, StoppedEvent, TerminatedEvent, ThreadEvent, Variable } from '@vscode/debugadapter';
+import { ContinuedEvent, InitializedEvent, LoggingDebugSession, OutputEvent, StoppedEvent, TerminatedEvent, ThreadEvent, Variable } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
 import { DebugInfo } from './DebugInfo.js';
 import { ViceMonitor } from './ViceMonitor.js';
@@ -31,6 +31,7 @@ class ViceCa65DebugSession extends LoggingDebugSession
 	nextVariableRef: number = 2;
 	dataRefs: Expression[] = [];
 	temporaryDataRefs: Expression[] = [];
+	tracepoints: {[ breakpoint: number]: string} = {};
 
 	public constructor()
 	{
@@ -51,6 +52,7 @@ class ViceCa65DebugSession extends LoggingDebugSession
 			response.body.supportsDataBreakpoints = true;
 			response.body.supportsDataBreakpointBytes = true;
 			response.body.supportsGotoTargetsRequest = true;
+			response.body.supportsLogPoints = true;
 		}
 		this.sendResponse(response);
 	}
@@ -63,9 +65,48 @@ class ViceCa65DebugSession extends LoggingDebugSession
 		}
 
 		this.vice = new ViceMonitor();
-		this.vice.on('breakpoint', () =>
+		this.vice.on('breakpoint', async (breakpoint: number) =>
 		{
-			this.sendEvent(new StoppedEvent("breakpoint", 1));
+			if (breakpoint in this.tracepoints)
+			{
+				const tracepointMessage = this.tracepoints[breakpoint];
+				var message: string = "";
+
+				var start = 0;
+				while (start < tracepointMessage.length)
+				{
+					var nextExpression = tracepointMessage.indexOf("{", start);
+					var endExpression = -1;
+
+					if (nextExpression >= 0)
+					{
+						endExpression = tracepointMessage.indexOf("}", nextExpression + 1);
+					}
+
+					if (endExpression >= 0)
+					{
+						message += tracepointMessage.substring(start, nextExpression);
+
+						const expr = await parseExpression(tracepointMessage.substring(nextExpression + 1, endExpression), this.debugInfo, this.vice);
+
+						let bits = ((expr.value > 65535) || (expr.value < -32768)) ? 32 : (((expr.value > 255) || (expr.value < -128)) ? 16 :8);
+						message += new ViceValue(expr.value, bits).toString();
+
+						start = endExpression + 1;
+					} else
+					{
+						message += tracepointMessage.substring(start);
+						start = tracepointMessage.length;
+					}
+				}
+				message += "\n";
+
+				this.sendEvent(new OutputEvent(message, "console"));
+				this.vice?.resume();
+			} else
+			{
+				this.sendEvent(new StoppedEvent("breakpoint", 1));
+			}
 		});
 		this.vice.on('resumed', () =>
 		{
@@ -278,6 +319,10 @@ class ViceCa65DebugSession extends LoggingDebugSession
 			{
 				for (const breakpointID of this.breakpointsBySource[source])
 				{
+					if (breakpointID in this.tracepoints)
+					{
+						delete this.tracepoints[breakpointID];
+					}
 					this.vice?.removeBreakpoint(breakpointID);
 				}
 			}
@@ -305,6 +350,11 @@ class ViceCa65DebugSession extends LoggingDebugSession
 
 						responseBreakpoint.id = breakpointID;
 						responseBreakpoint.verified = true;
+
+						if (breakpoint.logMessage)
+						{
+							this.tracepoints[breakpointID] = breakpoint.logMessage;
+						}
 					} else
 					{
 						responseBreakpoint.reason = 'failed';
